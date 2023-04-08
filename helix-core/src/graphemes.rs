@@ -217,6 +217,14 @@ pub fn nth_next_grapheme_boundary_byte(slice: RopeSlice, mut byte_idx: usize, n:
     // Find the nth next grapheme cluster boundary.
     for _ in 0..n {
         loop {
+            match is_unicode_boundary_byte(slice, gc.cur_cursor()) {
+                Some(false) => match next_unicode_boundary(slice, gc.cur_cursor()) {
+                    Some(n) => gc.set_cursor(n),
+                    None => gc.set_cursor(prev_unicode_boundary(slice, gc.cur_cursor()).unwrap()),
+                },
+                _ => {}
+            }
+
             match gc.next_boundary(chunk, chunk_byte_idx) {
                 Ok(None) => return slice.len_bytes(),
                 Ok(Some(n)) => {
@@ -304,6 +312,11 @@ pub fn is_grapheme_boundary(slice: RopeSlice, char_idx: usize) -> bool {
     // We work with bytes for this, so convert.
     let byte_idx = slice.char_to_byte(char_idx);
 
+    match is_unicode_boundary_byte(slice, byte_idx) {
+        Some(false) => return false,
+        _ => {}
+    }
+
     // Get the chunk with our byte index in it.
     let (chunk, chunk_byte_idx, _, _) = slice.chunk_at_byte(byte_idx);
 
@@ -329,6 +342,11 @@ pub fn is_grapheme_boundary_byte(slice: RopeSlice, byte_idx: usize) -> bool {
     // Bounds check
     debug_assert!(byte_idx <= slice.len_bytes());
 
+    match is_unicode_boundary_byte(slice, byte_idx) {
+        Some(false) => return false,
+        _ => {}
+    }
+
     // Get the chunk with our byte index in it.
     let (chunk, chunk_byte_idx, _, _) = slice.chunk_at_byte(byte_idx);
 
@@ -346,6 +364,43 @@ pub fn is_grapheme_boundary_byte(slice: RopeSlice, byte_idx: usize) -> bool {
             Err(_) => unreachable!(),
         }
     }
+}
+
+// Returns whether the given byte position is the start of a unicode sequence OR a single-byte value
+pub fn is_unicode_boundary_byte(slice: RopeSlice, byte_idx: usize) -> Option<bool> {
+    let byte = slice.get_byte(byte_idx);
+
+    // Unicode continuation bytes (ie bytes in the middle of a unicode sequence)
+    // always start with binary `10` => If the current byte is a continuation byte,
+    // it cannot possibly be a boundary!
+    return match byte {
+        Some(b) => Some(!(b & 0b11000000 == 0b10000000)),
+        None => None,
+    };
+}
+
+// Returns Some(index) of the next unicode boundary to the left
+pub fn prev_unicode_boundary(slice: RopeSlice, byte_idx: usize) -> Option<usize> {
+    for i in byte_idx..0 {
+        match is_unicode_boundary_byte(slice, i) {
+            Some(true) => return Some(i),
+            _ => {}
+        }
+    }
+
+    None
+}
+
+// Returns Some(index) of the next unicode boundary to the right
+pub fn next_unicode_boundary(slice: RopeSlice, byte_idx: usize) -> Option<usize> {
+    for i in byte_idx..slice.len_bytes() {
+        match is_unicode_boundary_byte(slice, i) {
+            Some(true) => return Some(i),
+            _ => {}
+        }
+    }
+
+    None
 }
 
 /// An iterator over the graphemes of a `RopeSlice`.
